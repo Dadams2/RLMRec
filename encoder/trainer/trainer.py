@@ -13,6 +13,10 @@ from config.configurator import configs
 from .utils import DisabledSummaryWriter, log_exceptions
 
 
+def naive_sparse2tensor(data):
+    return torch.FloatTensor(data.toarray())
+
+
 def init_seed():
     if 'reproducible' in configs['train']:
         if configs['train']['reproducible']:
@@ -207,6 +211,95 @@ class AutoCFTrainer(Trainer):
             self.logger.log_loss(epoch_idx, loss_log_dict)
         else:
             self.logger.log_loss(epoch_idx, loss_log_dict, save_to_log=False)
+
+
+class VAETrainer(Trainer):
+    def __init__(self, data_handler, logger):
+        super(VAETrainer, self).__init__(data_handler, logger)
+
+    def train_epoch(self, model, epoch_idx):
+
+        global update_counts
+        update_counts = 0
+
+        train_list = list(range(configs['data']['user_num']))
+        np.random.shuffle(train_list)
+
+        # for recording loss
+        loss_log_dict = {}
+        ep_loss = 0
+        # start this epoch
+        model.train()
+        for batch_id, start_id in enumerate(range(0, configs['data']['user_num'], configs['train']['batch_size'])):
+            self.optimizer.zero_grad()
+            end_id = min(start_id + configs['train']['batch_size'], configs['data']['user_num'])
+            batch_data = self.data_handler.train_data[train_list[start_id:end_id]]
+            data = naive_sparse2tensor(batch_data).to(configs['device'])
+
+            loss, loss_dict = model.cal_loss(train_list[start_id:end_id], data)
+            ep_loss += loss.item()
+            loss.backward()
+            self.optimizer.step()
+
+            update_counts += 1
+
+            # record loss
+            for loss_name in loss_dict:
+                _loss_val = float(loss_dict[loss_name])
+                if loss_name not in loss_log_dict:
+                    loss_log_dict[loss_name] = _loss_val
+                else:
+                    loss_log_dict[loss_name] += _loss_val
+
+        if 'log_loss' in configs['train'] and configs['train']['log_loss']:
+            self.logger.log(loss_log_dict, save_to_log=False, print_to_console=True)
+
+    @log_exceptions
+    def train(self, model):
+        now_patience = 0
+        best_epoch = 0
+        best_recall = -1e9
+        self.create_optimizer(model)
+        train_config = configs['train']
+
+        time_list = []
+
+        for epoch_idx in range(train_config['epoch']):
+            # train
+            start_time = time.time()
+            self.train_epoch(model, epoch_idx)
+            end_time = time.time()
+            time_list.append(end_time - start_time)
+
+            # evaluate
+            if epoch_idx % train_config['test_step'] == 0:
+                eval_result = self.evaluate(model, epoch_idx)
+
+                if eval_result['recall'][-1] > best_recall:
+                    now_patience = 0
+                    best_epoch = epoch_idx
+                    best_recall = eval_result['recall'][-1]
+                    best_state_dict = deepcopy(model.state_dict())
+                else:
+                    now_patience += 1
+
+                # early stop
+                if now_patience == configs['train']['patience']:
+                    break
+
+        # evaluation again
+        model = build_model(self.data_handler).to(configs['device'])
+        model.load_state_dict(best_state_dict)
+        self.evaluate(model)
+
+        # final test
+        model = build_model(self.data_handler).to(configs['device'])
+        model.load_state_dict(best_state_dict)
+        test_result = self.test(model)
+
+        # save result
+        self.save_model(model)
+        self.logger.log("Best Epoch {}. Final test result: {}.".format(best_epoch, test_result))
 
 
 

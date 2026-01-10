@@ -84,6 +84,9 @@ class Metric(object):
         for metric in self.metrics:
             result[metric] = np.zeros(len(self.k))
 
+        # train_hit = 0.0
+        # test_hit = 0.0
+
         batch_ratings = []
         ground_truths = []
         test_user_count = 0
@@ -92,6 +95,7 @@ class Metric(object):
             if not isinstance(tem, list):
                 tem = [tem]
             test_user = tem[0].numpy().tolist()
+
             batch_data = list(map(lambda x: x.long().to(configs['device']), tem))
             # predict result
             with torch.no_grad():
@@ -100,6 +104,27 @@ class Metric(object):
             # filter out history items
             batch_pred = self._mask_history_pos(batch_pred, test_user, test_dataloader)
             _, batch_rate = torch.topk(batch_pred, k=max(self.k))
+
+            # score, index = torch.topk(recon_x, 20)
+            #
+            # index = index.cpu()
+            #
+            # train_x = train_x.todense()
+
+            # for i in range(len(test_user)):
+                #
+                # test_list = list(test_dataloader.dataset.user_pos_lists[test_user[i]])
+                # train_list = np.nonzero(train_x[i])[1].tolist()
+                # pred_list = index[i].tolist()
+                #
+                # train_common = set(train_list) & set(pred_list)
+                # test_common = set(test_list) & set(pred_list)
+                # train_number = len(train_common)
+                # test_number = len(test_common)
+                #
+                # train_hit += train_number / 20
+                # test_hit += test_number / 20
+
             batch_ratings.append(batch_rate.cpu())
             # ground truth
             ground_truth = []
@@ -107,6 +132,11 @@ class Metric(object):
                 ground_truth.append(list(test_dataloader.dataset.user_pos_lists[user_idx]))
             ground_truths.append(ground_truth)
         assert test_user_count == test_user_num
+
+        # train_hit = train_hit / test_user_count
+        # test_hit = test_hit / test_user_count
+        #
+        # print(train_hit, "/", test_hit)
 
         # calculate metrics
         data_pair = zip(batch_ratings, ground_truths)
