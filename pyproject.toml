@@ -1,0 +1,16 @@
+[project]
+name = "dmrec"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "ipykernel>=6.29.5",
+    "matplotlib>=3.7.5",
+    "numpy==1.24.3",
+    "pyyaml<=6.0.2",
+    "scipy==1.10.1",
+    "setuptools>=75.3.2",
+    "torch==2.1.0",
+    "tqdm>=4.67.1",
+]
