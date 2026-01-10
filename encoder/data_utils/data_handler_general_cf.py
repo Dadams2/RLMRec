@@ -11,11 +11,11 @@ import torch.utils.data as data
 class DataHandlerGeneralCF:
     def __init__(self):
         if configs['data']['name'] == 'amazon':
-            predir = '../data/amazon/'
+            predir = './data/amazon/'
         elif configs['data']['name'] == 'yelp':
-            predir = '../data/yelp/'
+            predir = './data/yelp/'
         elif configs['data']['name'] == 'steam':
-            predir = '../data/steam/'
+            predir = './data/steam/'
         else:
             raise NotImplementedError
         self.trn_file = predir + 'trn_mat.pkl'
