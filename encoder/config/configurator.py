@@ -33,11 +33,11 @@ def parse_configure(model=None, dataset=None):
         args.dataset = dataset
 
     # find yml file
-    if not os.path.exists('./encoder/config/modelconf/{}.yml'.format(model_name)):
-        raise Exception("Please create the yaml file for your model first.")
+    if not os.path.exists('./config/modelconf/{}.yml'.format(model_name)):
+        raise Exception(f"Please create the yaml file for your model {model_name} first.")
 
     # read yml file
-    with open('./encoder/config/modelconf/{}.yml'.format(model_name), encoding='utf-8') as f:
+    with open('./config/modelconf/{}.yml'.format(model_name), encoding='utf-8') as f:
         config_data = f.read()
         configs = yaml.safe_load(config_data)
         configs['model']['name'] = configs['model']['name'].lower()
@@ -50,8 +50,8 @@ def parse_configure(model=None, dataset=None):
             configs['train']['seed'] = args.seed
 
         # semantic embeddings
-        usrprf_embeds_path = "./data/{}/usr_emb_np.pkl".format(configs['data']['name'])
-        itmprf_embeds_path = "./data/{}/itm_emb_np.pkl".format(configs['data']['name'])
+        usrprf_embeds_path = "../data/{}/usr_emb_np.pkl".format(configs['data']['name'])
+        itmprf_embeds_path = "../data/{}/itm_emb_np.pkl".format(configs['data']['name'])
         with open(usrprf_embeds_path, 'rb') as f:
             configs['usrprf_embeds'] = pickle.load(f)
         with open(itmprf_embeds_path, 'rb') as f:

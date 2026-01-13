@@ -137,14 +137,14 @@ class Trainer(object):
             model_state_dict = model.state_dict()
             model_name = configs['model']['name']
             if not configs['tune']['enable']:
-                save_dir_path = './encoder/checkpoint/{}'.format(model_name)
+                save_dir_path = './checkpoint/{}'.format(model_name)
 
                 if not os.path.exists(save_dir_path):
                     os.makedirs(save_dir_path)
                 torch.save(model_state_dict, '{}/{}-{}-{}.pth'.format(save_dir_path, model_name, configs['data']['name'], configs['train']['seed']))
                 self.logger.log("Save model parameters to {}".format('{}/{}-{}-{}.pth'.format(save_dir_path, model_name, configs['data']['name'], configs['train']['seed'])))
             else:
-                save_dir_path = './encoder/checkpoint/{}/tune'.format(model_name)
+                save_dir_path = './checkpoint/{}/tune'.format(model_name)
 
                 if not os.path.exists(save_dir_path):
                     os.makedirs(save_dir_path)
