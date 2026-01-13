@@ -1,0 +1,70 @@
+# Phase 2 Alternative: Mult-VAE MDDM with Residual Denoising
+# Learn additive corrections instead of full replacements
+# Refined = Original + α * Correction
+# α = 0 at start, gradually increases to correction_scale
+
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_residual
+  # general parameters here
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # NEW: Residual correction hyperparameters
+  # Maximum correction strength (at end of warmup)
+  # Lower values (0.05-0.1): Subtle refinements
+  # Higher values (0.2-0.5): More aggressive corrections
+  correction_scale: 0.1
+  
+  # Number of epochs to reach full correction strength
+  # Starts at α=0 (identical to baseline), linearly grows
+  warmup_epochs: 10
+  
+  # dataset-specific parameters here
+  # for amazon
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+  # for yelp
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+  # for steam
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+
+  embedding_size: 32
