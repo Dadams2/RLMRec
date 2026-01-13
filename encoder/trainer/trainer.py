@@ -46,6 +46,10 @@ class Trainer(object):
         train_dataloader = self.data_handler.train_dataloader
         train_dataloader.dataset.sample_negs()
 
+        # Update epoch for models that need it (e.g., warmup schedules)
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(epoch_idx)
+
         # for recording loss
         loss_log_dict = {}
         ep_loss = 0
