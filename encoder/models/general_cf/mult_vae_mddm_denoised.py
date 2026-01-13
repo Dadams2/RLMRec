@@ -33,12 +33,13 @@ class SemanticDenoiser(nn.Module):
     3. Refine embeddings based on recommendation loss gradients
     """
     def __init__(self, embedding_dim=1536, hidden_dim=512, 
-                 signal_dims=None, noise_dims=None):
+                 signal_dims=None, noise_dims=None, use_prior=True):
         super(SemanticDenoiser, self).__init__()
         
         self.embedding_dim = embedding_dim
         self.signal_dims = signal_dims if signal_dims is not None else []
         self.noise_dims = noise_dims if noise_dims is not None else []
+        self.use_prior = use_prior
         
         # Noise estimation network
         self.noise_estimator = nn.Sequential(
@@ -65,9 +66,12 @@ class SemanticDenoiser(nn.Module):
             nn.Linear(embedding_dim, embedding_dim)
         )
         
-        # Initialize with prior knowledge from analysis
-        if len(self.signal_dims) > 0 and len(self.noise_dims) > 0:
+        # Initialize with prior knowledge from analysis (optional)
+        if self.use_prior and len(self.signal_dims) > 0 and len(self.noise_dims) > 0:
             self._init_with_prior()
+        else:
+            # Random initialization - let the model learn from scratch
+            self._init_random()
     
     def _init_with_prior(self):
         """Initialize attention with prior knowledge from semantic analysis."""
@@ -81,6 +85,13 @@ class SemanticDenoiser(nn.Module):
                 # Start with slight negative bias for noise dims
                 for dim in self.noise_dims:
                     self.attention[2].bias[dim] -= 0.5
+    
+    def _init_random(self):
+        """Random initialization - learn signal/noise dimensions from scratch."""
+        # Use Xavier/Glorot initialization (already default for Linear layers)
+        # No bias towards any specific dimensions
+        # The model will learn which dimensions are signal vs noise during training
+        pass  # Default initialization is already random
     
     def forward(self, embeddings, return_components=False):
         """
@@ -124,6 +135,7 @@ class mult_vae_MDDM_Denoised(BaseModel):
 
         self.beta = self.hyper_config['beta']
         self.denoise_lambda = self.hyper_config.get('denoise_lambda', 0.01)  # Regularization weight
+        self.use_prior = self.hyper_config.get('use_prior', False)  # Whether to use prior from analysis
         
         self.data_handler = data_handler
 
@@ -143,6 +155,7 @@ class mult_vae_MDDM_Denoised(BaseModel):
         self.itmprf_embeds_raw = torch.tensor(configs['itmprf_embeds']).float().cuda()
         
         # Consensus dimensions from semantic analysis (Amazon dataset)
+        # Only used if use_prior=True
         self.user_signal_dims = [57, 89, 310, 378, 402, 408, 413, 422, 508, 654, 
                                   701, 738, 781, 830, 861, 920, 979, 997, 1166, 1330]
         self.user_noise_dims = [0, 137, 194, 271, 393, 470, 481, 489, 574, 699, 
@@ -151,18 +164,21 @@ class mult_vae_MDDM_Denoised(BaseModel):
         self.item_noise_dims = [194, 228, 518, 652, 954, 1120, 1240, 1246, 1348, 1487]
         
         # Learnable denoisers (Phase 2!)
+        # Can use prior from analysis OR learn from scratch
         self.user_denoiser = SemanticDenoiser(
             embedding_dim=self.usrprf_embeds_raw.shape[1],
             hidden_dim=512,
-            signal_dims=self.user_signal_dims,
-            noise_dims=self.user_noise_dims
+            signal_dims=self.user_signal_dims if self.use_prior else None,
+            noise_dims=self.user_noise_dims if self.use_prior else None,
+            use_prior=self.use_prior
         )
         
         self.item_denoiser = SemanticDenoiser(
             embedding_dim=self.itmprf_embeds_raw.shape[1],
             hidden_dim=512,
-            signal_dims=self.item_signal_dims,
-            noise_dims=self.item_noise_dims
+            signal_dims=self.item_signal_dims if self.use_prior else None,
+            noise_dims=self.item_noise_dims if self.use_prior else None,
+            use_prior=self.use_prior
         )
         
         # Denoise embeddings (will be updated during training)
