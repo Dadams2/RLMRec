@@ -1,0 +1,78 @@
+# Phase 3: Mult-VAE MDDM with Fine-tunable Open Source Encoder
+# Uses sentence-transformers that can be fine-tuned end-to-end from recommendation loss
+
+optimizer:
+  name: adam
+  lr: 5.0e-4  # Lower LR for fine-tuning (vs 1e-3 for baseline)
+  weight_decay: 0
+
+train:
+  epoch: 500  # Fewer epochs needed with fine-tuning
+  batch_size: 512  # Smaller batch for memory efficiency with encoder
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_finetuned
+  
+  # Encoder configuration
+  # Options: 'sentence-transformers/all-MiniLM-L6-v2' (384-dim, fast)
+  #          'sentence-transformers/all-mpnet-base-v2' (768-dim, better quality)
+  #          'BAAI/bge-small-en-v1.5' (384-dim, high quality)
+  encoder_name: 'sentence-transformers/all-MiniLM-L6-v2'
+  
+  # Set to True to freeze encoder (for ablation: test if fine-tuning helps)
+  freeze_encoder: False
+  
+  # Recompute embeddings every N batches (trade-off: speed vs freshness)
+  # Lower = more frequent updates, slower training
+  # Higher = less frequent updates, faster training
+  recompute_embeddings_every: 5
+  
+  # General parameters
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # Dataset-specific parameters
+  # for amazon
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    recompute_embeddings_every: 5
+  # for yelp
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    recompute_embeddings_every: 5
+  # for steam
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    recompute_embeddings_every: 5
+
+  embedding_size: 32
+
+# Notes:
+# - Fine-tuning a transformer is computationally expensive
+# - Start with all-MiniLM-L6-v2 (lightweight, 384-dim)
+# - Use lower learning rate (5e-4 vs 1e-3) to avoid catastrophic forgetting
+# - Smaller batch size (512 vs 1024) for memory efficiency
+# - Fewer epochs (500 vs 1000) as fine-tuning converges faster
+# - recompute_embeddings_every controls gradient freshness vs speed
