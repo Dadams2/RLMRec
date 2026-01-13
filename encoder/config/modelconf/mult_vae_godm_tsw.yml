@@ -1,0 +1,78 @@
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: false
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: yelp
+
+
+model:
+  name: mult_vae_godm_tsw
+  # general parameters here
+
+  # Tree-Sliced Wasserstein specific parameters
+  ntrees: 250              # Number of trees (higher = more accurate but slower)
+  nlines: 4                # Lines per tree (must be <= latent_dim for orthogonal)
+  tsw_p: 2                 # Norm order (2 = Wasserstein-2)
+  tsw_delta: 2.0           # Temperature for distance-based mass division
+  mass_division: distance_based  # 'uniform' or 'distance_based'
+  gen_mode: gaussian_orthogonal  # 'gaussian_orthogonal' or 'gaussian_raw'
+  
+  # Partial transport (unbalanced) settings
+  use_partial: false       # Enable partial transport for unbalanced distributions
+  total_mass_src: 1.0      # Source distribution total mass (if use_partial=true)
+  total_mass_llm: 1.0      # Target distribution total mass (if use_partial=true)
+  
+  # dataset-specific parameters here
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # for amazon
+  amazon:
+    dropout: 0.3
+    beta: 0.35             # TSW provides efficient tree-based slicing
+    reg_weight: 1.0e-6
+    ntrees: 250
+    nlines: 4
+    tsw_delta: 2.0
+    use_partial: false
+    
+  # for yelp
+  yelp:
+    dropout: 0.3
+    beta: 0.65             # Slightly lower than GODM (0.8) due to better geometry
+    reg_weight: 1.0e-6
+    ntrees: 250
+    nlines: 4
+    tsw_delta: 2.0
+    use_partial: false
+    
+  # for steam
+  steam:
+    dropout: 0.2
+    beta: 0.85             # Slightly lower than GODM (1.0)
+    reg_weight: 1.0e-6
+    ntrees: 250
+    nlines: 4
+    tsw_delta: 2.0
+    use_partial: false
+
+  embedding_size: 32
