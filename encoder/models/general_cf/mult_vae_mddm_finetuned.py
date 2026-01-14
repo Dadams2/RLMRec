@@ -14,6 +14,7 @@ Key differences from baseline:
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from config.configurator import configs
 from models.base_model import BaseModel
 import numpy as np
@@ -29,41 +30,128 @@ class FineTunableEncoder(nn.Module):
     """
     Wrapper around sentence-transformer that allows fine-tuning.
     
-    Uses mean pooling over token embeddings to get fixed-size sentence representations.
+    Computes embeddings on-the-fly to maintain gradient flow.
+    Uses gradient checkpointing for memory efficiency with large models.
     """
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2', 
-                 freeze_encoder=False, cache_embeddings=True):
+    def __init__(self, model_name='Qwen/Qwen3-Embedding-8B', 
+                 freeze_encoder=False, use_gradient_checkpointing=True,
+                 num_trainable_layers=4):
         super(FineTunableEncoder, self).__init__()
         
         self.model_name = model_name
-        self.cache_embeddings = cache_embeddings
+        self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.num_trainable_layers = num_trainable_layers
         
         # Load pre-trained sentence transformer
         print(f"Loading encoder: {model_name}")
-        self.encoder = SentenceTransformer(model_name)
+        self.encoder = SentenceTransformer(model_name, trust_remote_code=True)
         
         # Access the underlying transformer
         self.transformer = self.encoder[0].auto_model
         self.tokenizer = self.encoder[0].tokenizer
         
-        # Optionally freeze encoder (for comparison)
+        # Freeze encoder or use partial freezing
         if freeze_encoder:
             for param in self.transformer.parameters():
                 param.requires_grad = False
             print("  Encoder frozen (not trainable)")
         else:
-            print("  Encoder trainable (fine-tuning enabled)")
+            # Partial freezing: only train last few layers
+            self._freeze_early_layers(num_trainable_layers)
+            
+            # Enable gradient checkpointing for memory efficiency
+            if use_gradient_checkpointing and hasattr(self.transformer, 'gradient_checkpointing_enable'):
+                self.transformer.gradient_checkpointing_enable()
+                print(f"  Encoder partially trainable: last {num_trainable_layers} layers with gradient checkpointing")
+            else:
+                print(f"  Encoder partially trainable: last {num_trainable_layers} layers")
         
         self.embedding_dim = self.encoder.get_sentence_embedding_dimension()
+        self.freeze_encoder = freeze_encoder
         print(f"  Embedding dimension: {self.embedding_dim}")
-        
-        # Cache for efficiency during training
-        self.text_cache = {}
-        self.embedding_cache = {}
     
-    def encode_texts(self, texts, batch_size=32):
+    def _freeze_early_layers(self, num_trainable_layers):
         """
-        Encode texts into embeddings using the transformer.
+        Freeze all layers except the last num_trainable_layers.
+        This reduces the number of trainable parameters while still allowing
+        task-specific adaptation.
+        """
+        # First, freeze everything
+        for param in self.transformer.parameters():
+            param.requires_grad = False
+        
+        # Handle different transformer architectures
+        layers_to_train = None
+        total_layers = 0
+        
+        # Try BERT-style (encoder.layer)
+        if hasattr(self.transformer, 'encoder') and hasattr(self.transformer.encoder, 'layer'):
+            total_layers = len(self.transformer.encoder.layer)
+            layers_to_train = self.transformer.encoder.layer[-num_trainable_layers:]
+        
+        # Try GPT-style or Qwen-style (model.layers or layers)
+        elif hasattr(self.transformer, 'layers'):
+            total_layers = len(self.transformer.layers)
+            layers_to_train = self.transformer.layers[-num_trainable_layers:]
+        
+        elif hasattr(self.transformer, 'model') and hasattr(self.transformer.model, 'layers'):
+            total_layers = len(self.transformer.model.layers)
+            layers_to_train = self.transformer.model.layers[-num_trainable_layers:]
+        
+        # Try T5-style (encoder.block)
+        elif hasattr(self.transformer, 'encoder') and hasattr(self.transformer.encoder, 'block'):
+            total_layers = len(self.transformer.encoder.block)
+            layers_to_train = self.transformer.encoder.block[-num_trainable_layers:]
+        
+        if layers_to_train is not None:
+            # Unfreeze last N layers
+            for layer in layers_to_train:
+                for param in layer.parameters():
+                    param.requires_grad = True
+            
+            # Also unfreeze final layer norm if it exists
+            if hasattr(self.transformer, 'norm'):
+                for param in self.transformer.norm.parameters():
+                    param.requires_grad = True
+            elif hasattr(self.transformer, 'ln_f'):
+                for param in self.transformer.ln_f.parameters():
+                    param.requires_grad = True
+            elif hasattr(self.transformer, 'final_layer_norm'):
+                for param in self.transformer.final_layer_norm.parameters():
+                    param.requires_grad = True
+            
+            # Unfreeze pooler if it exists (for final representation)
+            if hasattr(self.transformer, 'pooler') and self.transformer.pooler is not None:
+                for param in self.transformer.pooler.parameters():
+                    param.requires_grad = True
+            
+            trainable_params = sum(p.numel() for p in self.transformer.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in self.transformer.parameters())
+            print(f"  Frozen {total_layers - num_trainable_layers}/{total_layers} layers")
+            print(f"  Trainable params: {trainable_params:,} / {total_params:,} ({trainable_params/total_params*100:.1f}%)")
+        else:
+            # Fallback: if structure is different, try to at least freeze embeddings
+            print(f"  Warning: Could not detect layer structure")
+            
+            # Freeze embedding layers
+            if hasattr(self.transformer, 'embeddings'):
+                for param in self.transformer.embeddings.parameters():
+                    param.requires_grad = False
+            elif hasattr(self.transformer, 'embed_tokens'):
+                for param in self.transformer.embed_tokens.parameters():
+                    param.requires_grad = False
+            elif hasattr(self.transformer, 'wte'):
+                for param in self.transformer.wte.parameters():
+                    param.requires_grad = False
+            
+            trainable_params = sum(p.numel() for p in self.transformer.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in self.transformer.parameters())
+            print(f"  Froze embeddings, trainable: {trainable_params:,} / {total_params:,} ({trainable_params/total_params*100:.1f}%)")
+    
+    def encode_batch(self, texts, batch_size=32):
+        """
+        Encode a batch of texts into embeddings.
+        Maintains gradient flow for fine-tuning by using transformer directly.
         
         Args:
             texts: List of strings
@@ -75,50 +163,71 @@ class FineTunableEncoder(nn.Module):
         if not isinstance(texts, list):
             texts = [texts]
         
-        # Check cache first
-        if self.cache_embeddings:
-            uncached_texts = []
-            uncached_indices = []
-            embeddings = [None] * len(texts)
+        device = next(self.parameters()).device
+        all_embeddings = []
+        
+        # Process in batches
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
             
-            for i, text in enumerate(texts):
-                if text in self.embedding_cache:
-                    embeddings[i] = self.embedding_cache[text]
-                else:
-                    uncached_texts.append(text)
-                    uncached_indices.append(i)
+            # Tokenize
+            encoded = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors='pt'
+            ).to(device)
             
-            # Encode uncached texts
-            if uncached_texts:
-                new_embeddings = self.encoder.encode(
-                    uncached_texts,
-                    batch_size=batch_size,
-                    show_progress_bar=False,
-                    convert_to_tensor=True,
-                    device=next(self.parameters()).device
-                )
-                
-                # Update cache and results
-                for i, idx in enumerate(uncached_indices):
-                    emb = new_embeddings[i]
-                    embeddings[idx] = emb
-                    if self.cache_embeddings:
-                        self.embedding_cache[uncached_texts[i]] = emb
+            # Forward through transformer (maintains gradients)
+            if self.freeze_encoder or not self.training:
+                with torch.no_grad():
+                    outputs = self.transformer(**encoded)
+            else:
+                outputs = self.transformer(**encoded)
             
-            return torch.stack(embeddings)
-        else:
-            # Direct encoding without cache
-            return self.encoder.encode(
-                texts,
-                batch_size=batch_size,
-                show_progress_bar=False,
-                convert_to_tensor=True,
-                device=next(self.parameters()).device
-            )
+            # Mean pooling
+            attention_mask = encoded['attention_mask']
+            token_embeddings = outputs[0]  # First element is token embeddings
+            
+            # Expand attention mask for broadcasting
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            
+            # Sum embeddings with mask, then divide by number of tokens
+            sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+            sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+            embeddings = sum_embeddings / sum_mask
+            
+            all_embeddings.append(embeddings)
+        
+        # Concatenate all batches
+        return torch.cat(all_embeddings, dim=0)
+        
+        return embeddings
     
-    def forward(self, texts):
-        """Forward pass - encode texts to embeddings."""
-        return self.encode_texts(texts)
+    def forward(self, text_indices, all_texts):
+        """
+        Forward pass - encode selected texts to embeddings.
+        
+        Args:
+            text_indices: Tensor of indices into all_texts
+            all_texts: List of all text strings
+            
+        Returns:
+            embeddings: [batch_size, embedding_dim]
+        """
+        # Get the texts for this batch
+        if isinstance(text_indices, torch.Tensor):
+            indices = text_indices.cpu().numpy()
+        else:
+            indices = text_indices
+        
+        batch_texts = [all_texts[i] for i in indices]
+        
+        # Encode with gradient flow
+        embeddings = self.encode_batch(batch_texts, batch_size=len(batch_texts))
+        
+        return embeddings
 
 
 class mult_vae_MDDM_FineTuned(BaseModel):
@@ -127,7 +236,10 @@ class mult_vae_MDDM_FineTuned(BaseModel):
 
         self.beta = self.hyper_config['beta']
         self.freeze_encoder = self.hyper_config.get('freeze_encoder', False)
-        self.encoder_name = self.hyper_config.get('encoder_name', 'sentence-transformers/all-MiniLM-L6-v2')
+        self.encoder_name = self.hyper_config.get('encoder_name', 'Qwen/Qwen3-Embedding-8B')
+        self.use_gradient_checkpointing = self.hyper_config.get('use_gradient_checkpointing', True)
+        self.num_trainable_layers = self.hyper_config.get('num_trainable_layers', 4)
+        self.compute_embeddings_every = self.hyper_config.get('compute_embeddings_every', 1)  # Every batch by default
         
         self.data_handler = data_handler
 
@@ -151,31 +263,25 @@ class mult_vae_MDDM_FineTuned(BaseModel):
         self.text_encoder = FineTunableEncoder(
             model_name=self.encoder_name,
             freeze_encoder=self.freeze_encoder,
-            cache_embeddings=True  # Cache for efficiency
+            use_gradient_checkpointing=self.use_gradient_checkpointing,
+            num_trainable_layers=self.num_trainable_layers
         )
         
-        # Pre-compute embeddings once for efficiency (with no_grad if frozen)
-        print("Pre-computing embeddings...")
-        if self.freeze_encoder:
-            with torch.no_grad():
-                self.usrprf_embeds = self.text_encoder.encode_texts(self.user_texts, batch_size=128)
-                self.itmprf_embeds = self.text_encoder.encode_texts(self.item_texts, batch_size=128)
-        else:
-            # Keep gradients enabled for fine-tuning
-            self.usrprf_embeds = self.text_encoder.encode_texts(self.user_texts, batch_size=128)
-            self.itmprf_embeds = self.text_encoder.encode_texts(self.item_texts, batch_size=128)
-            # Ensure requires_grad is True
-            self.usrprf_embeds.requires_grad_(True)
-            self.itmprf_embeds.requires_grad_(True)
-        print(f"  User embeddings: {self.usrprf_embeds.shape}")
-        print(f"  Item embeddings: {self.itmprf_embeds.shape}")
+        # Store encoder dimension
+        encoder_dim = self.text_encoder.embedding_dim
+        print(f"  Encoder dimension: {encoder_dim}")
 
         # MLP for processing semantic information
-        encoder_dim = self.text_encoder.embedding_dim
+        # Input: encoder_dim (4096 for Qwen), Output: 400 (200 for mu + 200 for logvar)
+        # Larger MLP to handle high-dimensional Qwen embeddings
         self.mlp = nn.Sequential(
-            nn.Linear(encoder_dim, 600),
+            nn.Linear(encoder_dim, 2048),
             nn.Tanh(),
-            nn.Linear(600, 400)
+            nn.Linear(2048, 1024),
+            nn.Tanh(),
+            nn.Linear(1024, 512),
+            nn.Tanh(),
+            nn.Linear(512, 400)
         )
 
         self.p_layers = nn.ModuleList(
@@ -186,10 +292,21 @@ class mult_vae_MDDM_FineTuned(BaseModel):
 
         self.final_embeds = None
         self.is_training = False
+        self.batch_counter = 0
         
-        # Training config
-        self.recompute_embeddings_every = self.hyper_config.get('recompute_embeddings_every', 5)
-        self.epoch_counter = 0
+        # For frozen encoder, pre-compute embeddings once
+        if self.freeze_encoder:
+            print("Pre-computing embeddings (frozen encoder mode)...")
+            with torch.no_grad():
+                self.usrprf_embeds = self.text_encoder.encode_batch(self.user_texts, batch_size=128)
+                self.itmprf_embeds = self.text_encoder.encode_batch(self.item_texts, batch_size=128)
+            print(f"  User embeddings: {self.usrprf_embeds.shape}")
+            print(f"  Item embeddings: {self.itmprf_embeds.shape}")
+        else:
+            # For trainable encoder, embeddings computed on-the-fly
+            self.usrprf_embeds = None
+            self.itmprf_embeds = None
+            print("  Embeddings will be computed on-the-fly during training")
 
     def _load_text_profiles(self):
         """Load text profiles for users and items from pickle files."""
@@ -216,21 +333,42 @@ class mult_vae_MDDM_FineTuned(BaseModel):
         
         return user_texts, item_texts
     
-    def recompute_embeddings(self):
+    def get_user_embeddings(self, user_indices):
         """
-        Recompute embeddings from text using updated encoder.
-        Called periodically during training to update embeddings based on fine-tuned encoder.
+        Get user embeddings with gradient flow.
+        Computes on-the-fly if encoder is trainable, uses cached if frozen.
         """
-        if not self.freeze_encoder and self.is_training:
-            with torch.enable_grad():
-                self.usrprf_embeds = self.text_encoder.encode_texts(self.user_texts, batch_size=128)
-                self.itmprf_embeds = self.text_encoder.encode_texts(self.item_texts, batch_size=128)
+        if self.freeze_encoder:
+            # Use pre-computed embeddings
+            return self.usrprf_embeds[user_indices]
+        else:
+            # Compute on-the-fly with gradient flow
+            return self.text_encoder(user_indices, self.user_texts)
+    
+    def get_item_embeddings(self):
+        """
+        Get all item embeddings.
+        Computes on-the-fly if encoder is trainable, uses cached if frozen.
+        """
+        if self.freeze_encoder:
+            # Use pre-computed embeddings
+            return self.itmprf_embeds
+        else:
+            # Compute on-the-fly with gradient flow
+            # For items, we need all embeddings for the full item-item interaction
+            # Only recompute periodically for efficiency
+            if self.itmprf_embeds is None or self.batch_counter % self.compute_embeddings_every == 0:
+                self.itmprf_embeds = self.text_encoder.encode_batch(self.item_texts, batch_size=128)
+            return self.itmprf_embeds
 
-    def encode(self, x, user_emb):
+    def encode(self, x, user_emb, item_emb):
         h = self.drop(x)
         
-        # Use current embeddings (may be recomputed during training)
-        hidden = torch.matmul(h, self.itmprf_embeds) + user_emb
+        # Compute interaction between user behavior and item semantics
+        # x: [batch, item_num] (user's interaction history)
+        # item_emb: [item_num, emb_dim] (item semantic embeddings)
+        # Result: [batch, emb_dim] (semantic representation of user's interactions)
+        hidden = torch.matmul(h, item_emb) + user_emb
         hidden = self.mlp(hidden)
 
         mu_llm = hidden[:, :200]
@@ -265,16 +403,13 @@ class mult_vae_MDDM_FineTuned(BaseModel):
 
     def cal_loss(self, user, batch_data):
         self.is_training = True
+        self.batch_counter += 1
         
-        # Periodically recompute embeddings if encoder is trainable
-        if not self.freeze_encoder:
-            self.epoch_counter += 1
-            if self.epoch_counter % self.recompute_embeddings_every == 0:
-                self.recompute_embeddings()
+        # Get embeddings with gradient flow
+        user_emb = self.get_user_embeddings(user)
+        item_emb = self.get_item_embeddings()
 
-        user_emb = self.usrprf_embeds[user]
-
-        mu_src, mu_llm, logvar_src, logvar_llm = self.encode(batch_data, user_emb)
+        mu_src, mu_llm, logvar_src, logvar_llm = self.encode(batch_data, user_emb, item_emb)
 
         # Combine distributions (MDDM strategy)
         mu = mu_src + mu_llm
@@ -307,9 +442,12 @@ class mult_vae_MDDM_FineTuned(BaseModel):
 
         batch_data = self.data_handler.train_data[pck_users.cpu()]
         data = torch.FloatTensor(batch_data.toarray()).to(configs['device'])
-        user_emb = self.usrprf_embeds[pck_users]
+        
+        # Get embeddings (frozen: cached, trainable: compute)
+        user_emb = self.get_user_embeddings(pck_users)
+        item_emb = self.get_item_embeddings()
 
-        mu, mu_llm, logvar, logvar_llm = self.encode(data, user_emb)
+        mu, mu_llm, logvar, logvar_llm = self.encode(data, user_emb, item_emb)
 
         mu = mu + mu_llm
         logvar = logvar + logvar_llm
