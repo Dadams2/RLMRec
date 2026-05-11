@@ -1,0 +1,39 @@
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: false
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_mmd
+  use_multi_scale: true
+  dropout: 0.3
+  reg_weight: 1.0e-6
+  
+  amazon:
+    dropout: 0.3
+    beta: 0.2
+    reg_weight: 1.0e-6
+    use_multi_scale: true
+    mmd_weight: 15.0
+
+  embedding_size: 32
