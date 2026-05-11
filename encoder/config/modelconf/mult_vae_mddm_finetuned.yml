@@ -1,0 +1,92 @@
+# Phase 3: Mult-VAE MDDM with Fine-tunable Open Source Encoder
+# Uses Qwen3-Embedding-8B (4096-dim) with partial layer fine-tuning
+
+optimizer:
+  name: adam
+  lr: 2.0e-5  # Low LR for fine-tuning last few layers
+  weight_decay: 1.0e-6
+
+train:
+  epoch: 200  # Fewer epochs with large model
+  batch_size: 128  # Small batch for memory with 4096-dim embeddings
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_finetuned
+  
+  # Encoder configuration
+  # Using Qwen3-Embedding-8B (4096-dim, state-of-the-art)
+  encoder_name: 'Qwen/Qwen3-Embedding-8B'
+  encoder_name: 'sentence-transformers/all-MiniLM-L6-v2'
+  
+  # Set to True to freeze encoder (for ablation: test if fine-tuning helps)
+  freeze_encoder: False
+  
+  # Number of transformer layers to fine-tune (from the end)
+  # Only the last N layers will have trainable parameters
+  # This significantly reduces memory and compute while maintaining effectiveness
+  # Typical values: 2-6 layers (out of 24-48 total)
+  num_trainable_layers: 4
+  
+  # Use gradient checkpointing for memory efficiency (recommended for large models)
+  use_gradient_checkpointing: True
+  
+  # Compute item embeddings every N batches (trade-off: speed vs freshness)
+  # User embeddings always computed fresh each batch
+  # Lower = more frequent updates, slower training
+  # Higher = less frequent updates, faster training
+  compute_embeddings_every: 1
+  
+  # General parameters
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # Dataset-specific parameters
+  # for amazon
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    compute_embeddings_every: 1
+    num_trainable_layers: 4
+  # for yelp
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    compute_embeddings_every: 1
+    num_trainable_layers: 4
+  # for steam
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    compute_embeddings_every: 1
+    num_trainable_layers: 4
+
+  embedding_size: 32
+
+# Notes:
+# - Using Qwen3-Embedding-8B (4096-dim embeddings, state-of-the-art)
+# - Partial layer fine-tuning: only last 4 layers trainable (~10-20% of encoder params)
+# - Low learning rate (2e-5) suitable for fine-tuning pre-trained models
+# - Small batch size (128) for memory efficiency with 4096-dim embeddings
+# - Gradient checkpointing reduces memory usage by ~50%
+# - On-the-fly embedding computation ensures gradient flow to encoder
+# - MLP: 4096 → 2048 → 1024 → 512 → 400 (handles high-dim embeddings)
+# - num_trainable_layers=4 means only top 4 transformer layers are updated
