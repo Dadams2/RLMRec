@@ -63,3 +63,21 @@ class Logger(object):
             self.logger.info(message)
         if print_to_console:
             print(message)
+
+    def log_live_prompt(self, epoch_idx, live_result, save_to_log=True, print_to_console=True):
+        message = 'Epoch {:3d} LivePrompt '.format(epoch_idx)
+        message += 'users={} user_hits={} user_failures={} '.format(
+            live_result.get('user_updates', 0),
+            live_result.get('user_cache_hits', 0),
+            live_result.get('user_failures', 0),
+        )
+        message += 'items={} item_hits={} item_failures={} artifact={}'.format(
+            live_result.get('item_updates', 0),
+            live_result.get('item_cache_hits', 0),
+            live_result.get('item_failures', 0),
+            live_result.get('artifact_path', ''),
+        )
+        if save_to_log:
+            self.logger.info(message)
+        if print_to_console:
+            print(message)

@@ -1,0 +1,74 @@
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+live_prompting:
+  enabled: true
+  eval_frequency: 1
+  sample_size: 64
+  item_sample_size: 32
+  top_k_items: 5
+  top_k_support_users: 3
+  artifact_dir: ./encoder/log/live_prompting
+  cache_enabled: true
+  chat_base_url: http://localhost:8000/v1
+  chat_api_key: EMPTY
+  chat_model: Qwen/Qwen2.5-7B-Instruct
+  embedding_base_url: http://localhost:8001/v1
+  embedding_api_key: EMPTY
+  embedding_model: Qwen/Qwen3-Embedding-4B
+  max_retries: 3
+  timeout: 120
+  feedback_mode: sidecar_bank
+  response_format: json
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_residual_live_prompt
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  correction_scale: 0.1
+  warmup_epochs: 10
+
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    correction_scale: 0.1
+    warmup_epochs: 10
+
+  embedding_size: 32

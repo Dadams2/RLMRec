@@ -10,6 +10,7 @@ import torch.optim as optim
 from trainer.metrics import Metric
 from models.bulid_model import build_model
 from config.configurator import configs
+from trainer.live_prompting import LivePromptEngine
 from .utils import DisabledSummaryWriter, log_exceptions
 
 
@@ -35,6 +36,7 @@ class Trainer(object):
         self.data_handler = data_handler
         self.logger = logger
         self.metric = Metric()
+        self.live_prompt_engine = LivePromptEngine(data_handler, logger)
 
     def create_optimizer(self, model):
         optim_config = configs['optimizer']
@@ -45,6 +47,10 @@ class Trainer(object):
         # prepare training data
         train_dataloader = self.data_handler.train_dataloader
         train_dataloader.dataset.sample_negs()
+
+        # Update epoch for models that need it (e.g., warmup schedules)
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(epoch_idx)
 
         # for recording loss
         loss_log_dict = {}
@@ -76,6 +82,7 @@ class Trainer(object):
         now_patience = 0
         best_epoch = 0
         best_recall = -1e9
+        best_live_prompt_state = None
         self.create_optimizer(model)
         train_config = configs['train']
         for epoch_idx in range(train_config['epoch']):
@@ -84,12 +91,15 @@ class Trainer(object):
             # evaluate
             if epoch_idx % train_config['test_step'] == 0:
                 eval_result = self.evaluate(model, epoch_idx)
+                self.run_live_prompt_eval(model, epoch_idx)
 
                 if eval_result['recall'][-1] > best_recall:
                     now_patience = 0
                     best_epoch = epoch_idx
                     best_recall = eval_result['recall'][-1]
                     best_state_dict = deepcopy(model.state_dict())
+                    if hasattr(model, 'get_live_prompt_state'):
+                        best_live_prompt_state = model.get_live_prompt_state()
                 else:
                     now_patience += 1
 
@@ -100,11 +110,15 @@ class Trainer(object):
         # evaluation again
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
+            model.load_live_prompt_state(best_live_prompt_state)
         self.evaluate(model)
 
         # final test
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
+            model.load_live_prompt_state(best_live_prompt_state)
         test_result = self.test(model)
 
         # save result
@@ -124,6 +138,12 @@ class Trainer(object):
         eval_result = self.metric.eval(model, self.data_handler.test_dataloader)
         self.logger.log_eval(eval_result, configs['test']['k'], data_type='Test set')
         return eval_result
+
+    def run_live_prompt_eval(self, model, epoch_idx):
+        live_result = self.live_prompt_engine.run_epoch(model, epoch_idx)
+        if live_result is not None:
+            self.logger.log_live_prompt(epoch_idx, live_result)
+        return live_result
     
     @log_exceptions
     def test_save(self, model):
@@ -137,14 +157,14 @@ class Trainer(object):
             model_state_dict = model.state_dict()
             model_name = configs['model']['name']
             if not configs['tune']['enable']:
-                save_dir_path = './encoder/checkpoint/{}'.format(model_name)
+                save_dir_path = './checkpoint/{}'.format(model_name)
 
                 if not os.path.exists(save_dir_path):
                     os.makedirs(save_dir_path)
                 torch.save(model_state_dict, '{}/{}-{}-{}.pth'.format(save_dir_path, model_name, configs['data']['name'], configs['train']['seed']))
                 self.logger.log("Save model parameters to {}".format('{}/{}-{}-{}.pth'.format(save_dir_path, model_name, configs['data']['name'], configs['train']['seed'])))
             else:
-                save_dir_path = './encoder/checkpoint/{}/tune'.format(model_name)
+                save_dir_path = './checkpoint/{}/tune'.format(model_name)
 
                 if not os.path.exists(save_dir_path):
                     os.makedirs(save_dir_path)
@@ -222,6 +242,10 @@ class VAETrainer(Trainer):
         global update_counts
         update_counts = 0
 
+        # Update epoch for models that need it (e.g., warmup schedules)
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(epoch_idx)
+
         train_list = list(range(configs['data']['user_num']))
         np.random.shuffle(train_list)
 
@@ -259,6 +283,7 @@ class VAETrainer(Trainer):
         now_patience = 0
         best_epoch = 0
         best_recall = -1e9
+        best_live_prompt_state = None
         self.create_optimizer(model)
         train_config = configs['train']
 
@@ -274,12 +299,15 @@ class VAETrainer(Trainer):
             # evaluate
             if epoch_idx % train_config['test_step'] == 0:
                 eval_result = self.evaluate(model, epoch_idx)
+                self.run_live_prompt_eval(model, epoch_idx)
 
                 if eval_result['recall'][-1] > best_recall:
                     now_patience = 0
                     best_epoch = epoch_idx
                     best_recall = eval_result['recall'][-1]
                     best_state_dict = deepcopy(model.state_dict())
+                    if hasattr(model, 'get_live_prompt_state'):
+                        best_live_prompt_state = model.get_live_prompt_state()
                 else:
                     now_patience += 1
 
@@ -290,11 +318,15 @@ class VAETrainer(Trainer):
         # evaluation again
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
+            model.load_live_prompt_state(best_live_prompt_state)
         self.evaluate(model)
 
         # final test
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
+            model.load_live_prompt_state(best_live_prompt_state)
         test_result = self.test(model)
 
         # save result
