@@ -1,0 +1,65 @@
+# Phase 2: Mult-VAE MDDM with Learnable Semantic Denoising
+# Based on semantic noise analysis showing perfect consensus on signal/noise dimensions
+# Consensus signal dimensions: [57, 89, 310, 378, 402, 408, 413, 422, 508, 654, 
+#                                701, 738, 781, 830, 861, 920, 979, 997, 1166, 1330]
+# Consensus noise dimensions: [0, 137, 194, 271, 393, 470, 481, 489, 574, 699,
+#                               750, 994, 1031, 1055, 1205, 1387, 1486, 1522, 1524, 1532]
+
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_denoised
+  # general parameters here
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # NEW: Denoising hyperparameter
+  # Weight for denoising regularization loss
+  # Lower values (0.001-0.01): Gentle denoising, preserves most information
+  # Higher values (0.05-0.1): Aggressive denoising, stronger noise suppression
+  denoise_lambda: 0.01
+  
+  # dataset-specific parameters here
+  # for amazon
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    denoise_lambda: 0.01
+  # for yelp
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    denoise_lambda: 0.01
+  # for steam
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    denoise_lambda: 0.01
+
+  embedding_size: 32
