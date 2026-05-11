@@ -156,6 +156,26 @@ For semantic representation encoding, you can also try other text embedding mode
 
 😀 The **instructions** we designed are saved in the `{user/item}_system_prompt.txt` files and also the `generation/instruction` folder. You can modify them according to your requirements and generate the desired output!
 
+For the newer multi-profile pipeline, the local-first scripts in `generation/generate_multi_profiles.py` and `generation/generate_multi_emb.py` can target a locally running vLLM server via its OpenAI-compatible API.
+
+Example chat server for multi-profile generation:
+
+```bash
+vllm serve Qwen/Qwen2.5-7B-Instruct --served-model-name Qwen/Qwen2.5-7B-Instruct
+python generation/generate_multi_profiles.py --dataset amazon --entity user --K 4 \
+  --base_url http://localhost:8000/v1 --model Qwen/Qwen2.5-7B-Instruct
+```
+
+Example embedding server for multi-profile embeddings:
+
+```bash
+vllm serve Qwen/Qwen3-Embedding-4B --task embed --served-model-name Qwen/Qwen3-Embedding-4B --port 8001
+python generation/generate_multi_emb.py --dataset amazon --entity user --K 4 \
+  --base_url http://localhost:8001/v1 --emb_model Qwen/Qwen3-Embedding-4B
+```
+
+The multi-profile embedding width must match the existing `usr_emb_np.pkl` / `itm_emb_np.pkl` width, otherwise the downstream ProEx models will fail shape checks. If you switch to a different embedding size, regenerate the base single-profile embeddings with the same model first.
+
 ## 🌟 Citation
 If you find this work is helpful to your research, please consider citing our paper:
 ```bibtex
