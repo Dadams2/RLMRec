@@ -1,0 +1,105 @@
+# End-to-End Multi-View ProEx Recommendation Model
+# Combines ProEx multi-profile invariance learning with learnable profile embeddings
+#
+# Key hyperparameters:
+#   num_profiles (K): Number of profile views per entity
+#   num_environments (E): Training environments for invariance
+#   matching_strategy: 'mddm' | 'godm' | 'mmd'
+#   lambda_*: Loss term weights
+#   warmup_epochs: Environment noise annealing period
+
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_proex_e2e
+
+  # --- Architecture ---
+  embedding_size: 32
+  num_profiles: 4          # K profile views per entity
+  num_environments: 2      # E environments per training step
+  matching_strategy: mddm  # mddm | godm | mmd
+  mixer_input: latent      # latent (200-dim) | interaction (item_num-dim)
+
+  # --- Loss weights ---
+  lambda_align: 1.0        # Distribution matching weight
+  lambda_contrast: 0.01    # Contrastive profile regularization
+  lambda_variance: 0.5     # Cross-environment invariance
+  lambda_drift: 0.1        # L2 drift from LLM initialization
+
+  # --- Training schedule ---
+  warmup_epochs: 20        # Environment noise annealing (random → learned)
+  dirichlet_alpha: 1.0     # Dirichlet concentration parameter
+  contrast_tau: 0.2        # Contrastive temperature
+
+  # --- Profile initialization ---
+  init_scale: 0.01         # Std of initial offset noise
+
+  # --- General ---
+  dropout: 0.2
+  reg_weight: 1.0e-6
+
+  # --- Dataset-specific ---
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    num_profiles: 4
+    num_environments: 2
+    lambda_align: 1.0
+    lambda_contrast: 0.01
+    lambda_variance: 0.5
+    lambda_drift: 0.1
+    warmup_epochs: 20
+    init_scale: 0.01
+    matching_strategy: mddm
+
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    num_profiles: 4
+    num_environments: 2
+    lambda_align: 1.0
+    lambda_contrast: 0.01
+    lambda_variance: 0.5
+    lambda_drift: 0.1
+    warmup_epochs: 20
+    init_scale: 0.01
+    matching_strategy: mddm
+
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    num_profiles: 4
+    num_environments: 2
+    lambda_align: 1.0
+    lambda_contrast: 0.01
+    lambda_variance: 0.5
+    lambda_drift: 0.1
+    warmup_epochs: 20
+    init_scale: 0.01
+    matching_strategy: mddm
