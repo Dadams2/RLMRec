@@ -1,0 +1,71 @@
+optimizer:
+  name: adam
+  lr: 1.0e-3
+  weight_decay: 0
+
+train:
+  epoch: 1000
+  batch_size: 1024
+  save_model: True
+  loss: pairwise
+  test_step: 3
+  reproducible: true
+  seed: 2024
+  patience: 20
+  trainer: vae_trainer
+
+test:
+  metrics: [recall, ndcg]
+  k: [5, 10, 20]
+  batch_size: 1024
+
+data:
+  type: general_cf
+  name: amazon
+
+model:
+  name: mult_vae_mddm_diffusion
+  
+  # Diffusion meta-learner parameters
+  # meta_type options: 'diffusion', 'score', 'flow'
+  # - diffusion: Full diffusion model with iterative denoising (best for complex distributions)
+  # - score: Score matching (simpler, faster, still captures distribution structure)
+  # - flow: Flow matching / optimal transport (best theoretical connection to distribution matching)
+  meta_type: diffusion
+  diffusion_steps: 10       # Number of denoising steps (more = better quality, slower)
+  diffusion_hidden: 512     # Hidden dimension of diffusion network
+  diffusion_lambda: 0.1     # Weight for auxiliary diffusion loss
+  
+  # General parameters
+  dropout: 0.2
+  reg_weight: 1.0e-6
+  
+  # Dataset-specific parameters
+  amazon:
+    dropout: 0.3
+    beta: 0.6
+    reg_weight: 1.0e-6
+    meta_type: diffusion
+    diffusion_steps: 10
+    diffusion_hidden: 512
+    diffusion_lambda: 0.1
+  
+  yelp:
+    dropout: 0.3
+    beta: 0.4
+    reg_weight: 1.0e-6
+    meta_type: diffusion
+    diffusion_steps: 10
+    diffusion_hidden: 512
+    diffusion_lambda: 0.1
+  
+  steam:
+    dropout: 0.2
+    beta: 0.5
+    reg_weight: 1.0e-6
+    meta_type: diffusion
+    diffusion_steps: 10
+    diffusion_hidden: 512
+    diffusion_lambda: 0.1
+
+  embedding_size: 32
