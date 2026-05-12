@@ -9,12 +9,16 @@ Usage:
   python generate_multi_emb.py --dataset amazon --entity item --K 4
   python generate_multi_emb.py --dataset amazon --entity user --K 4 \
       --base_url http://localhost:8001/v1 --emb_model Qwen/Qwen3-Embedding-4B
+  python generate_multi_emb.py --dataset amazon --entity user --K 4 \
+      --base_url http://localhost:8001/v1 --emb_model Qwen/Qwen3-Embedding-8B \
+      --dimensions 1536
 
 Requires:
   - A local vLLM server exposing the OpenAI-compatible embeddings API
   - Optional: VLLM_BASE_URL / VLLM_API_KEY / VLLM_EMB_MODEL environment variables
   - Multi-profile pickle: data/{dataset}/usr_multi_prf.pkl or itm_multi_prf.pkl
-  - The embedding dimension must match the existing usr_emb_np.pkl / itm_emb_np.pkl
+    - The embedding dimension must match the existing usr_emb_np.pkl / itm_emb_np.pkl
+        (for newer embedding models, pass --dimensions to request a compatible width)
 
 Output:
   data/{dataset}/usr_multi_emb_np.pkl (or itm_multi_emb_np.pkl)
@@ -43,11 +47,14 @@ DEFAULT_VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "EMPTY")
 DEFAULT_EMBEDDING_MODEL = os.environ.get("VLLM_EMB_MODEL", "Qwen/Qwen3-Embedding-4B")
 
 
-def embed_batch(client, texts, model=DEFAULT_EMBEDDING_MODEL, max_retries=3):
+def embed_batch(client, texts, model=DEFAULT_EMBEDDING_MODEL, dimensions=None, max_retries=3):
     """Embed a batch of texts via an OpenAI-compatible embeddings API."""
     for attempt in range(max_retries):
         try:
-            response = client.embeddings.create(input=texts, model=model)
+            request_kwargs = {"input": texts, "model": model}
+            if dimensions is not None:
+                request_kwargs["dimensions"] = dimensions
+            response = client.embeddings.create(**request_kwargs)
             return [np.asarray(item.embedding, dtype=np.float32) for item in response.data]
         except Exception as e:
             if attempt < max_retries - 1:
@@ -90,6 +97,8 @@ def main():
                         help="Base URL for the OpenAI-compatible vLLM embeddings server")
     parser.add_argument("--api_key", type=str, default=DEFAULT_VLLM_API_KEY,
                         help="API key for the local vLLM server; use any non-empty value if auth is disabled")
+    parser.add_argument("--dimensions", type=int, default=None,
+                        help="Optional embedding width to request from models that support custom dimensions")
     parser.add_argument("--batch_size", type=int, default=256,
                         help="Number of texts per API call")
     args = parser.parse_args()
@@ -121,6 +130,8 @@ def main():
     print(f"Will produce: [{num_entities}, {K}, {emb_dim}] embeddings")
     print(f"vLLM endpoint: {args.base_url}")
     print(f"Embedding model: {args.emb_model}")
+    if args.dimensions is not None:
+        print(f"Requested embedding dimensions: {args.dimensions}")
 
     all_texts = []
     entity_order = list(range(num_entities))
@@ -154,7 +165,12 @@ def main():
         non_empty_indices = [i for i, text in enumerate(batch_texts) if text.strip()]
         if non_empty_indices:
             non_empty_texts = [batch_texts[i] for i in non_empty_indices]
-            embeddings = embed_batch(client, non_empty_texts, model=args.emb_model)
+            embeddings = embed_batch(
+                client,
+                non_empty_texts,
+                model=args.emb_model,
+                dimensions=args.dimensions,
+            )
             validate_embedding_batch(embeddings, emb_dim, args.emb_model)
 
             batch_embs = [np.zeros(emb_dim, dtype=np.float32) for _ in batch_texts]
