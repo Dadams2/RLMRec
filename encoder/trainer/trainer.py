@@ -110,6 +110,8 @@ class Trainer(object):
         # evaluation again
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(best_epoch)
         if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
             model.load_live_prompt_state(best_live_prompt_state)
         self.evaluate(model)
@@ -117,6 +119,8 @@ class Trainer(object):
         # final test
         model = build_model(self.data_handler).to(configs['device'])
         model.load_state_dict(best_state_dict)
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(best_epoch)
         if best_live_prompt_state is not None and hasattr(model, 'load_live_prompt_state'):
             model.load_live_prompt_state(best_live_prompt_state)
         test_result = self.test(model)
@@ -332,6 +336,5 @@ class VAETrainer(Trainer):
         # save result
         self.save_model(model)
         self.logger.log("Best Epoch {}. Final test result: {}.".format(best_epoch, test_result))
-
 
 
